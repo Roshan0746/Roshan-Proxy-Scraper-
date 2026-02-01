@@ -6,12 +6,12 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 # --- [ SECURE CONFIG ] ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "421311524"))
-REQUIRED_GROUP = "@The_Bot_Group" # Naya group
+REQUIRED_GROUP = "@The_Bot_Group" # Naya Group
 SAVE_FILE = "working_proxies.txt"
 USER_DATA_FILE = "user_access.json"
 COOLDOWN_TIME = 60 # Seconds
 
-# Global Stats
+# Statistics Tracking
 stats = {"scraped": 0, "checked": 0, "start": time.time()}
 user_cooldowns = {} 
 
@@ -70,14 +70,14 @@ async def scraper_task(context: ContextTypes.DEFAULT_TYPE):
                     await asyncio.gather(*tasks)
             except: continue
 
-# --- [ LIVE DASHBOARD ] ---
+# --- [ LIVE ADMIN DASHBOARD ] ---
 async def update_dashboard(context: ContextTypes.DEFAULT_TYPE):
     ready_count = sum(1 for line in open(SAVE_FILE)) if os.path.exists(SAVE_FILE) else 0
     ist_now = datetime.utcnow() + timedelta(hours=5, minutes=30)
     curr_time = ist_now.strftime('%H:%M:%S')
     
     dash_text = (
-        "🛰 **PROXY SCRAPER CORE v7.5**\n"
+        "🛰 **PROXY SCRAPER CORE v7.7**\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "🟢 **System:** `Active` | ⚡ **Threads:** `40/s`\n"
         "━━━━━━━━━━━━━━━━━━\n"
@@ -100,7 +100,17 @@ async def update_dashboard(context: ContextTypes.DEFAULT_TYPE):
             context.bot_data['last_dash_id'] = msg.message_id
     except: pass
 
-# --- [ HANDLERS ] ---
+# --- [ ACCESS HELPERS ] ---
+def get_remaining_time(user_id):
+    if user_id == ADMIN_ID: return "Admin"
+    uid_str = str(user_id)
+    if uid_str not in user_access: return None
+    expiry = datetime.fromisoformat(user_access[uid_str])
+    if datetime.utcnow() > expiry: return None
+    diff = expiry - datetime.utcnow()
+    return f"{diff.seconds // 60}m {diff.seconds % 60}s"
+
+# --- [ MAIN HANDLERS ] ---
 async def start(u: Update, c: ContextTypes.DEFAULT_TYPE):
     user_id = u.effective_user.id
     try:
@@ -109,37 +119,35 @@ async def start(u: Update, c: ContextTypes.DEFAULT_TYPE):
     except:
         kb = [[InlineKeyboardButton("📢 Join Group", url=f"https://t.me/{REQUIRED_GROUP[1:]}")],
               [InlineKeyboardButton("✅ I have Joined", callback_data="check_join")]]
-        await u.message.reply_text("👋 Hello! Join our group to use the Proxy Scraper.", reply_markup=InlineKeyboardMarkup(kb))
+        await u.message.reply_text("👋 Hello! Access is limited to group members.", reply_markup=InlineKeyboardMarkup(kb))
         return
 
-    uid_str = str(user_id)
-    rem = "Admin" if user_id == ADMIN_ID else None
-    if uid_str in user_access:
-        expiry = datetime.fromisoformat(user_access[uid_str])
-        if datetime.utcnow() < expiry:
-            diff = expiry - datetime.utcnow()
-            rem = f"{diff.seconds // 60}m {diff.seconds % 60}s"
-    
+    rem = get_remaining_time(user_id)
     if not rem:
         kb = [[InlineKeyboardButton("📩 Request Access", callback_data=f"req_{user_id}")]]
-        await u.message.reply_text("⚠️ No active session. Request access:", reply_markup=InlineKeyboardMarkup(kb))
+        await u.message.reply_text("⚠️ No active session. Request a time window below:", reply_markup=InlineKeyboardMarkup(kb))
         return
 
     kb = [['📊 Status', '📥 Get Proxy']]
-    await u.message.reply_text(f"✅ **Access Active** ({rem})\nChoose an option:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True), parse_mode='Markdown')
+    await u.message.reply_text(f"✅ **Access Active**\nRemaining: `{rem}`", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True), parse_mode='Markdown')
 
 async def handle_buttons(u: Update, c: ContextTypes.DEFAULT_TYPE):
     user_id = u.effective_user.id
     text = u.message.text
+    now = time.time()
     
-    if text == '📊 Status':
-        ready_count = sum(1 for line in open(SAVE_FILE)) if os.path.exists(SAVE_FILE) else 0
-        await u.message.reply_text(f"🛰 **STATUS**\nReady: `{ready_count}`\nChecked: `{stats['checked']}`", parse_mode='Markdown')
+    # Session Check
+    rem_time = get_remaining_time(user_id)
+    if user_id != ADMIN_ID and not rem_time:
+        await u.message.reply_text("❌ Session expired. Use /start.")
+        return
 
-    elif text == '📥 Get Proxy':
-        now = time.time()
+    # Unified Proxy Card (Status & Get Proxy)
+    if text in ['📊 Status', '📥 Get Proxy']:
+        # Cooldown Logic
         if user_id in user_cooldowns and now - user_cooldowns[user_id] < COOLDOWN_TIME:
-            await u.message.reply_text(f"⏳ **Cooldown Active**\nWait `{int(COOLDOWN_TIME - (now - user_cooldowns[user_id]))}s`.", parse_mode='Markdown')
+            wait = int(COOLDOWN_TIME - (now - user_cooldowns[user_id]))
+            await u.message.reply_text(f"⏳ **Cooldown Active**\nWait `{wait}s` more.", parse_mode='Markdown')
             return
 
         if os.path.exists(SAVE_FILE) and os.path.getsize(SAVE_FILE) > 0:
@@ -147,11 +155,12 @@ async def handle_buttons(u: Update, c: ContextTypes.DEFAULT_TYPE):
             with open(SAVE_FILE, 'r') as f: all_p = f.readlines()
             sample = random.sample(all_p, min(len(all_p), 2))
             
-            isp_name = await get_isp_info(sample[0].split("://")[-1].split(":")[0])
+            p1_ip = sample[0].split("://")[-1].split(":")[0]
+            isp_name = await get_isp_info(p1_ip)
 
-            # --- [ FINALIZED UI ] ---
+            # --- [ CLEAN FINAL UI ] ---
             proxy_card = (
-                "🛰 **PROXY SCRAPER: ASSIGNED**\n"
+                "🛰 **Proxy Scraper**\n" # Title: Just Proxy Scraper
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 f"🏢 **ISP:** `{isp_name}`\n"
                 "🌍 **LOC:** 🇮🇳 `Mumbai`\n"
@@ -165,9 +174,9 @@ async def handle_buttons(u: Update, c: ContextTypes.DEFAULT_TYPE):
             )
             await u.message.reply_text(proxy_card, parse_mode='Markdown')
         else:
-            await u.message.reply_text("❌ No proxies ready yet.")
+            await u.message.reply_text("❌ No proxies ready. Scraper is running...")
 
-async def admin_callback(u: Update, c: ContextTypes.DEFAULT_TYPE):
+async def callback_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
     q = u.callback_query
     await q.answer()
     if q.data == "check_join": await start(q, c)
@@ -181,11 +190,12 @@ async def admin_callback(u: Update, c: ContextTypes.DEFAULT_TYPE):
         save_users(user_access)
         await c.bot.send_message(int(uid), f"✨ Access Granted for {mins}m!")
 
+# --- [ MAIN LOOP ] ---
 def main():
     if not os.path.exists(SAVE_FILE): open(SAVE_FILE, "w").close()
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(admin_callback))
+    app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
     
     if app.job_queue:
@@ -195,4 +205,4 @@ def main():
     app.run_polling()
 
 if __name__ == "__main__": main()
-                    
+    
