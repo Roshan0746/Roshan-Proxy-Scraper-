@@ -39,14 +39,41 @@ async def get_isp_info(ip):
                 return data.get('isp', 'Global Network') if data.get('status') == 'success' else "Global Network"
     except: return "Global Network"
 
+def get_progress_bar(ready):
+    total_goal = 5000
+    ratio = min(ready / total_goal, 1.0)
+    bar = "█" * int(ratio * 10) + "░" * (10 - int(ratio * 10))
+    return f"[{bar}] {int(ratio * 100)}%"
+
 async def delete_message_job(context: ContextTypes.DEFAULT_TYPE):
-    # 10 minute baad message delete karne ka logic
     try:
         await context.bot.delete_message(chat_id=context.job.chat_id, message_id=context.job.data)
     except: pass
 
-async def get_proxy_card_text():
-    # Title: Sirf Proxy Scraper
+# --- [ UI GENERATORS ] ---
+
+def get_status_dashboard(ready_count):
+    # Technical Dashboard for Status button
+    ist_now = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    curr_time = ist_now.strftime('%H:%M:%S')
+    
+    return (
+        "🛰 **Proxy Scraper**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "🟢 **System:** `Active` | ⚡ **Threads:** `40/s`\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"📦 **Scraped:** `{stats['scraped']:,}`\n"
+        f"🔎 **Checked:** `{stats['checked']:,}`\n"
+        f"🔥 **Ready:** `{ready_count:,}`\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"📊 **Efficiency:** `{get_progress_bar(ready_count)}`\n"
+        f"🕒 **Last Sync:** `{curr_time} IST`\n\n"
+        "👤 **By** @RoshanGP4A\n"
+        "📢 **Group:** @The_Bot_Group"
+    )
+
+async def get_proxy_card_ui():
+    # Proxy delivery UI for Get Proxy button
     if os.path.exists(SAVE_FILE) and os.path.getsize(SAVE_FILE) > 0:
         with open(SAVE_FILE, 'r') as f: all_p = f.readlines()
         sample = random.sample(all_p, min(len(all_p), 2))
@@ -97,24 +124,7 @@ async def scraper_task(context: ContextTypes.DEFAULT_TYPE):
 # --- [ LIVE ADMIN DASHBOARD ] ---
 async def update_dashboard(context: ContextTypes.DEFAULT_TYPE):
     ready_count = sum(1 for line in open(SAVE_FILE)) if os.path.exists(SAVE_FILE) else 0
-    ist_now = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    curr_time = ist_now.strftime('%H:%M:%S')
-    
-    # Dashboard branding: Sirf Proxy Scraper
-    dash_text = (
-        "🛰 **Proxy Scraper**\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "🟢 **System:** `Active` | ⚡ **Threads:** `40/s`\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"📦 **Scraped:** `{stats['scraped']:,}`\n"
-        f"🔎 **Checked:** `{stats['checked']:,}`\n"
-        f"🔥 **Ready:** `{ready_count:,}`\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"🕒 **Last Sync:** `{curr_time} IST`\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "👤 **Developer:** @RoshanGP4A\n"
-        "📢 **Group:** @The_Bot_Group"
-    )
+    dash_text = get_status_dashboard(ready_count)
 
     try:
         if 'last_dash_id' in context.bot_data:
@@ -166,24 +176,29 @@ async def handle_buttons(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await u.message.reply_text("❌ Session expired. Use /start.")
         return
 
+    ready_count = sum(1 for line in open(SAVE_FILE)) if os.path.exists(SAVE_FILE) else 0
+
     if text == '📊 Status':
-        # Status par koi cooldown nahi hai
-        card_text = await get_proxy_card_text()
+        # NO COOLDOWN for status dashboard
         kb = [[InlineKeyboardButton("🔄 Refresh Status", callback_data="refresh_status")]]
-        await u.message.reply_text(card_text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
+        await u.message.reply_text(
+            get_status_dashboard(ready_count),
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
 
     elif text == '📥 Get Proxy':
-        # Cooldown sirf Get Proxy par
+        # 60s COOLDOWN for proxy delivery
         if user_id != ADMIN_ID and user_id in user_cooldowns and now - user_cooldowns[user_id] < COOLDOWN_TIME:
             wait = int(COOLDOWN_TIME - (now - user_cooldowns[user_id]))
             await u.message.reply_text(f"⏳ **Cooldown Active**\nWait `{wait}s` more.", parse_mode='Markdown')
             return
 
         user_cooldowns[user_id] = now
-        card_text = await get_proxy_card_text()
-        msg = await u.message.reply_text(card_text, parse_mode='Markdown')
+        proxy_text = await get_proxy_card_ui()
+        msg = await u.message.reply_text(proxy_text, parse_mode='Markdown')
         
-        # 10 minute auto-delete task
+        # 10 MIN AUTO-DELETE
         c.job_queue.run_once(delete_message_job, AUTO_DELETE_TIME, chat_id=u.effective_chat.id, data=msg.message_id)
 
 async def callback_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
@@ -193,11 +208,14 @@ async def callback_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if q.data == "check_join": 
         await start(q, c)
     elif q.data == "refresh_status":
-        # Edit existing message instead of sending new one
-        card_text = await get_proxy_card_text()
-        kb = [[InlineKeyboardButton("🔄 Refresh Status", callback_data="refresh_status")]]
+        # Refresh technical dashboard, edit message
+        ready_count = sum(1 for line in open(SAVE_FILE)) if os.path.exists(SAVE_FILE) else 0
         try:
-            await q.edit_message_text(card_text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
+            await q.edit_message_text(
+                get_status_dashboard(ready_count),
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh Status", callback_data="refresh_status")]])
+            )
         except: pass 
     elif q.data.startswith("req_"):
         uid = q.data.split("_")[1]
