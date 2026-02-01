@@ -6,13 +6,12 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 # --- [ SECURE CONFIG ] ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "421311524"))
-REQUIRED_GROUP = "@The_Bot_Group"
+REQUIRED_GROUP = "@The_Bot_Group" # Link fixed
 SAVE_FILE = "working_proxies.txt"
 USER_DATA_FILE = "user_access.json"
-COOLDOWN_TIME = 60 # Sirf Get Proxy ke liye
+COOLDOWN_TIME = 60 
 AUTO_DELETE_TIME = 600 # 10 Minutes
 
-# Statistics Tracking
 stats = {"scraped": 0, "checked": 0, "start": time.time()}
 user_cooldowns = {} 
 
@@ -50,10 +49,15 @@ async def delete_message_job(context: ContextTypes.DEFAULT_TYPE):
         await context.bot.delete_message(chat_id=context.job.chat_id, message_id=context.job.data)
     except: pass
 
-# --- [ UI GENERATORS ] ---
+# --- [ INSTANT UI GENERATORS ] ---
 
-def get_status_dashboard(ready_count):
-    # Technical Dashboard for Status button
+def get_status_dashboard():
+    # Instant line count calculation
+    ready_count = 0
+    if os.path.exists(SAVE_FILE):
+        with open(SAVE_FILE, 'r') as f:
+            ready_count = len(f.readlines())
+    
     ist_now = datetime.utcnow() + timedelta(hours=5, minutes=30)
     curr_time = ist_now.strftime('%H:%M:%S')
     
@@ -69,11 +73,10 @@ def get_status_dashboard(ready_count):
         f"📊 **Efficiency:** `{get_progress_bar(ready_count)}`\n"
         f"🕒 **Last Sync:** `{curr_time} IST`\n\n"
         "👤 **By** @RoshanGP4A\n"
-        "📢 **Group:** @The_Bot_Group"
+        "📢 **Join:** @The_Bot_Group"
     )
 
 async def get_proxy_card_ui():
-    # Proxy delivery UI for Get Proxy button
     if os.path.exists(SAVE_FILE) and os.path.getsize(SAVE_FILE) > 0:
         with open(SAVE_FILE, 'r') as f: all_p = f.readlines()
         sample = random.sample(all_p, min(len(all_p), 2))
@@ -121,19 +124,6 @@ async def scraper_task(context: ContextTypes.DEFAULT_TYPE):
                     await asyncio.gather(*tasks)
             except: continue
 
-# --- [ LIVE ADMIN DASHBOARD ] ---
-async def update_dashboard(context: ContextTypes.DEFAULT_TYPE):
-    ready_count = sum(1 for line in open(SAVE_FILE)) if os.path.exists(SAVE_FILE) else 0
-    dash_text = get_status_dashboard(ready_count)
-
-    try:
-        if 'last_dash_id' in context.bot_data:
-            await context.bot.edit_message_text(chat_id=ADMIN_ID, message_id=context.bot_data['last_dash_id'], text=dash_text, parse_mode='Markdown')
-        else:
-            msg = await context.bot.send_message(chat_id=ADMIN_ID, text=dash_text, parse_mode='Markdown')
-            context.bot_data['last_dash_id'] = msg.message_id
-    except: pass
-
 # --- [ ACCESS HELPERS ] ---
 def get_remaining_time(user_id):
     if user_id == ADMIN_ID: return "Admin"
@@ -170,25 +160,18 @@ async def handle_buttons(u: Update, c: ContextTypes.DEFAULT_TYPE):
     text = u.message.text
     now = time.time()
     
-    # Session Check
     rem_time = get_remaining_time(user_id)
     if user_id != ADMIN_ID and not rem_time:
         await u.message.reply_text("❌ Session expired. Use /start.")
         return
 
-    ready_count = sum(1 for line in open(SAVE_FILE)) if os.path.exists(SAVE_FILE) else 0
-
     if text == '📊 Status':
-        # NO COOLDOWN for status dashboard
+        # NO COOLDOWN for status
         kb = [[InlineKeyboardButton("🔄 Refresh Status", callback_data="refresh_status")]]
-        await u.message.reply_text(
-            get_status_dashboard(ready_count),
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup(kb)
-        )
+        await u.message.reply_text(get_status_dashboard(), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
 
     elif text == '📥 Get Proxy':
-        # 60s COOLDOWN for proxy delivery
+        # COOLDOWN for proxy delivery only
         if user_id != ADMIN_ID and user_id in user_cooldowns and now - user_cooldowns[user_id] < COOLDOWN_TIME:
             wait = int(COOLDOWN_TIME - (now - user_cooldowns[user_id]))
             await u.message.reply_text(f"⏳ **Cooldown Active**\nWait `{wait}s` more.", parse_mode='Markdown')
@@ -208,15 +191,14 @@ async def callback_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if q.data == "check_join": 
         await start(q, c)
     elif q.data == "refresh_status":
-        # Refresh technical dashboard, edit message
-        ready_count = sum(1 for line in open(SAVE_FILE)) if os.path.exists(SAVE_FILE) else 0
+        # Instant refresh triggered by user
         try:
             await q.edit_message_text(
-                get_status_dashboard(ready_count),
+                get_status_dashboard(),
                 parse_mode='Markdown',
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh Status", callback_data="refresh_status")]])
             )
-        except: pass 
+        except Exception: pass 
     elif q.data.startswith("req_"):
         uid = q.data.split("_")[1]
         kb = [[InlineKeyboardButton("+10m", callback_data=f"add_{uid}_10"), InlineKeyboardButton("+60m", callback_data=f"add_{uid}_60")]]
@@ -236,7 +218,6 @@ def main():
     
     if app.job_queue:
         app.job_queue.run_repeating(scraper_task, interval=120, first=5)
-        app.job_queue.run_repeating(update_dashboard, interval=15, first=10)
     
     app.run_polling()
 
