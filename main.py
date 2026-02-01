@@ -4,30 +4,16 @@ from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKe
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
 # --- [ SECURE CONFIG ] ---
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.getenv("BOT_TOKEN") # Yahan apna Token daalein agar env me nahi hai
 ADMIN_ID = int(os.getenv("ADMIN_ID", "421311524"))
-REQUIRED_GROUP = "@ThisIsBotGroup" # Link Updated
+REQUIRED_GROUP = "@ThisIsBotGroup" 
 SAVE_FILE = "working_proxies.txt"
-USER_DATA_FILE = "user_access.json"
-COOLDOWN_TIME = 60 # Cooldown only for Get Proxy
+COOLDOWN_TIME = 60 # Button spam rokne ke liye wait time
 AUTO_DELETE_TIME = 600 # 10 Minutes
 
 # Global Stats
 stats = {"scraped": 0, "checked": 0, "start": time.time()}
 user_cooldowns = {} 
-
-# --- [ DATA PERSISTENCE ] ---
-def load_users():
-    if os.path.exists(USER_DATA_FILE):
-        try:
-            with open(USER_DATA_FILE, "r") as f: return json.load(f)
-        except: return {}
-    return {}
-
-def save_users(data):
-    with open(USER_DATA_FILE, "w") as f: json.dump(data, f)
-
-user_access = load_users()
 
 # --- [ UI & INTEL HELPERS ] ---
 async def get_isp_info(ip):
@@ -40,7 +26,6 @@ async def get_isp_info(ip):
     except: return "Global Network"
 
 def get_progress_bar(ready, checked):
-    # Dynamic Success Rate Logic
     if checked == 0: return "[░░░░░░░░░░] 0%"
     ratio = min(ready / checked, 1.0)
     filled = int(ratio * 10)
@@ -55,7 +40,6 @@ async def delete_message_job(context: ContextTypes.DEFAULT_TYPE):
 # --- [ INSTANT UI GENERATORS ] ---
 
 def get_status_dashboard():
-    # Instant calculation from file
     ready_count = 0
     if os.path.exists(SAVE_FILE):
         with open(SAVE_FILE, 'r') as f:
@@ -77,7 +61,7 @@ def get_status_dashboard():
         f"📊 **Efficiency:** `{efficiency}`\n"
         f"🕒 **Last Sync:** `{curr_time} IST`\n\n"
         "👤 **By** @RoshanGP4A\n"
-        "📢 **Join: @ThisIsBotGroup**" # Username Updated
+        "📢 **Join: @ThisIsBotGroup**"
     )
 
 async def get_proxy_card_ui():
@@ -98,7 +82,7 @@ async def get_proxy_card_ui():
             "━━━━━━━━━━━━━━━━━━━━\n"
             "✅ **Verified** |\n"
             "👤 **By** @RoshanGP4A\n"
-            "📢 **Join: @ThisIsBotGroup**" # Username Updated
+            "📢 **Join: @ThisIsBotGroup**"
         )
     return "❌ No proxies ready. Scraper is running..."
 
@@ -128,53 +112,46 @@ async def scraper_task(context: ContextTypes.DEFAULT_TYPE):
                     await asyncio.gather(*tasks)
             except: continue
 
-# --- [ ACCESS HELPERS ] ---
-def get_remaining_time(user_id):
-    if user_id == ADMIN_ID: return "Admin"
-    uid_str = str(user_id)
-    if uid_str not in user_access: return None
-    expiry = datetime.fromisoformat(user_access[uid_str])
-    if datetime.utcnow() > expiry: return None
-    diff = expiry - datetime.utcnow()
-    return f"{diff.seconds // 60}m {diff.seconds % 60}s"
-
 # --- [ MAIN HANDLERS ] ---
 async def start(u: Update, c: ContextTypes.DEFAULT_TYPE):
     user_id = u.effective_user.id
+    
+    # --- MEMBER CHECK LOGIC ---
     try:
-        m = await c.bot.get_chat_member(chat_id=REQUIRED_GROUP, user_id=user_id)
-        if m.status not in ['member', 'administrator', 'creator']: raise Exception()
+        if user_id != ADMIN_ID: # Admin bypass check
+            m = await c.bot.get_chat_member(chat_id=REQUIRED_GROUP, user_id=user_id)
+            if m.status not in ['member', 'administrator', 'creator']: raise Exception()
     except:
-        # Full Link Updated
+        # User not in group
         kb = [[InlineKeyboardButton("📢 Join Group", url="https://t.me/ThisIsBotGroup")],
               [InlineKeyboardButton("✅ I have Joined", callback_data="check_join")]]
-        await u.message.reply_text("👋 Join our group to use the Proxy Scraper.", reply_markup=InlineKeyboardMarkup(kb))
+        await u.message.reply_text("👋 **Access Denied!**\n\nYou must join our group to use this bot.", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
         return
 
-    rem = get_remaining_time(user_id)
-    if not rem:
-        kb = [[InlineKeyboardButton("📩 Request Access", callback_data=f"req_{user_id}")]]
-        await u.message.reply_text("⚠️ No active session.", reply_markup=InlineKeyboardMarkup(kb))
-        return
-
+    # --- ACCESS GRANTED (NO TIMER) ---
     kb = [['📊 Status', '📥 Get Proxy']]
-    await u.message.reply_text(f"✅ **Access Active** ({rem})", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True), parse_mode='Markdown')
+    await u.message.reply_text(f"✅ **Access Granted!**\nWelcome to Proxy Scraper.", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True), parse_mode='Markdown')
 
 async def handle_buttons(u: Update, c: ContextTypes.DEFAULT_TYPE):
     user_id = u.effective_user.id
     text = u.message.text
     now = time.time()
     
-    rem_time = get_remaining_time(user_id)
-    if user_id != ADMIN_ID and not rem_time:
-        await u.message.reply_text("❌ Session expired. Use /start.")
-        return
+    # Re-check membership on every click (Security)
+    try:
+        if user_id != ADMIN_ID:
+            m = await c.bot.get_chat_member(chat_id=REQUIRED_GROUP, user_id=user_id)
+            if m.status not in ['member', 'administrator', 'creator']:
+                await u.message.reply_text("❌ You left the group. Join back to use.")
+                return
+    except: return
 
     if text == '📊 Status':
         kb = [[InlineKeyboardButton("🔄 Refresh Status", callback_data="refresh_status")]]
         await u.message.reply_text(get_status_dashboard(), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
 
     elif text == '📥 Get Proxy':
+        # Simple Flood Control
         if user_id != ADMIN_ID and user_id in user_cooldowns:
             time_diff = now - user_cooldowns[user_id]
             if time_diff < COOLDOWN_TIME:
@@ -204,15 +181,6 @@ async def callback_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh Status", callback_data="refresh_status")]])
             )
         except Exception: pass 
-    elif q.data.startswith("req_"):
-        uid = q.data.split("_")[1]
-        kb = [[InlineKeyboardButton("+10m", callback_data=f"add_{uid}_10"), InlineKeyboardButton("+60m", callback_data=f"add_{uid}_60")]]
-        await c.bot.send_message(ADMIN_ID, f"🔔 Request from `{uid}`", reply_markup=InlineKeyboardMarkup(kb))
-    elif q.data.startswith("add_"):
-        _, uid, mins = q.data.split("_")
-        user_access[str(uid)] = (datetime.utcnow() + timedelta(minutes=int(mins))).isoformat()
-        save_users(user_access)
-        await c.bot.send_message(int(uid), f"✨ Access Granted for {mins}m!")
 
 def main():
     if not os.path.exists(SAVE_FILE): open(SAVE_FILE, "w").close()
