@@ -9,9 +9,10 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "421311524"))
 REQUIRED_GROUP = "@The_Bot_Group" # Link fixed
 SAVE_FILE = "working_proxies.txt"
 USER_DATA_FILE = "user_access.json"
-COOLDOWN_TIME = 60 
+COOLDOWN_TIME = 60 # Cooldown logic
 AUTO_DELETE_TIME = 600 # 10 Minutes
 
+# Global Stats
 stats = {"scraped": 0, "checked": 0, "start": time.time()}
 user_cooldowns = {} 
 
@@ -38,13 +39,18 @@ async def get_isp_info(ip):
                 return data.get('isp', 'Global Network') if data.get('status') == 'success' else "Global Network"
     except: return "Global Network"
 
-def get_progress_bar(ready):
-    total_goal = 5000
-    ratio = min(ready / total_goal, 1.0)
-    bar = "█" * int(ratio * 10) + "░" * (10 - int(ratio * 10))
+def get_progress_bar(ready, checked):
+    # Dynamic Success Rate Logic
+    if checked == 0: return "[░░░░░░░░░░] 0%"
+    
+    # Calculate: Working / Total Checked
+    ratio = min(ready / checked, 1.0)
+    filled = int(ratio * 10)
+    bar = "█" * filled + "░" * (10 - filled)
     return f"[{bar}] {int(ratio * 100)}%"
 
 async def delete_message_job(context: ContextTypes.DEFAULT_TYPE):
+    # Message auto-delete
     try:
         await context.bot.delete_message(chat_id=context.job.chat_id, message_id=context.job.data)
     except: pass
@@ -52,7 +58,7 @@ async def delete_message_job(context: ContextTypes.DEFAULT_TYPE):
 # --- [ INSTANT UI GENERATORS ] ---
 
 def get_status_dashboard():
-    # Instant line count calculation
+    # Instant stats calculation
     ready_count = 0
     if os.path.exists(SAVE_FILE):
         with open(SAVE_FILE, 'r') as f:
@@ -60,6 +66,10 @@ def get_status_dashboard():
     
     ist_now = datetime.utcnow() + timedelta(hours=5, minutes=30)
     curr_time = ist_now.strftime('%H:%M:%S')
+    
+    # Title: Proxy Scraper
+    # Passing checked count to show dynamic progress
+    efficiency = get_progress_bar(ready_count, stats['checked'])
     
     return (
         "🛰 **Proxy Scraper**\n"
@@ -70,10 +80,10 @@ def get_status_dashboard():
         f"🔎 **Checked:** `{stats['checked']:,}`\n"
         f"🔥 **Ready:** `{ready_count:,}`\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        f"📊 **Efficiency:** `{get_progress_bar(ready_count)}`\n"
+        f"📊 **Efficiency:** `{efficiency}`\n"
         f"🕒 **Last Sync:** `{curr_time} IST`\n\n"
         "👤 **By** @RoshanGP4A\n"
-        "📢 **Join:** @The_Bot_Group"
+        "📢 **Join:** @The_Bot_Group" # Name fixed
     )
 
 async def get_proxy_card_ui():
@@ -160,13 +170,14 @@ async def handle_buttons(u: Update, c: ContextTypes.DEFAULT_TYPE):
     text = u.message.text
     now = time.time()
     
+    # Session Check
     rem_time = get_remaining_time(user_id)
     if user_id != ADMIN_ID and not rem_time:
         await u.message.reply_text("❌ Session expired. Use /start.")
         return
 
     if text == '📊 Status':
-        # NO COOLDOWN for status
+        # NO COOLDOWN for instant dashboard refresh
         kb = [[InlineKeyboardButton("🔄 Refresh Status", callback_data="refresh_status")]]
         await u.message.reply_text(get_status_dashboard(), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
 
@@ -181,7 +192,7 @@ async def handle_buttons(u: Update, c: ContextTypes.DEFAULT_TYPE):
         proxy_text = await get_proxy_card_ui()
         msg = await u.message.reply_text(proxy_text, parse_mode='Markdown')
         
-        # 10 MIN AUTO-DELETE
+        # 10 MIN AUTO-DELETE task
         c.job_queue.run_once(delete_message_job, AUTO_DELETE_TIME, chat_id=u.effective_chat.id, data=msg.message_id)
 
 async def callback_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
@@ -191,7 +202,7 @@ async def callback_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if q.data == "check_join": 
         await start(q, c)
     elif q.data == "refresh_status":
-        # Instant refresh triggered by user
+        # Edit existing dashboard message instantly
         try:
             await q.edit_message_text(
                 get_status_dashboard(),
@@ -217,9 +228,9 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
     
     if app.job_queue:
+        # Repeating scraper task every 2 mins
         app.job_queue.run_repeating(scraper_task, interval=120, first=5)
     
     app.run_polling()
 
 if __name__ == "__main__": main()
-    
